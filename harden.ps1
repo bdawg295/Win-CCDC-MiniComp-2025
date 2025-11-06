@@ -1,9 +1,6 @@
 # =========================
 #  Mini-Comp Windows Hardening (Uptime-First, Stateless)
 #  Roles: IIS (Moon Landing), WINRM (First Olympics), ICMP (Silk Road)
-#  Never create users. Never delete users. Never change passwords.
-#  Admins: never add; only remove extras from Administrators.
-#  Users: enforce keep-list by disabling everyone else.
 # =========================
 
 Set-StrictMode -Version Latest
@@ -148,30 +145,92 @@ function Invoke-Services {
 # --- Entry point ---
 function harden {
     param(
-        [ValidateSet('IIS','WINRM','ICMP')] [Parameter(Mandatory=$true)] [string]$Role,
+        [ValidateSet('IIS','WINRM','ICMP')] 
+        [Parameter(Mandatory=$true)] 
+        [string]$Role,
+
         [string[]]$KeepAdmins,
-        [string[]]$KeepUsers
+        [string[]]$KeepUsers,
+
+        [switch]$DryRun
     )
 
+    if ($DryRun) {
+        Write-Host "===== DRY RUN MODE =====" -ForegroundColor Yellow
+        Write-Host "Role: $Role"
+        Write-Host "KeepAdmins: $($KeepAdmins -join ', ')"
+        Write-Host "KeepUsers: $($KeepUsers -join ', ')"
+        Write-Host ""
+
+        # --- ADMIN CHECK ---
+        Write-Host "[Admins] Current Local Administrators:" -ForegroundColor Cyan
+        $curAdmins = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue |
+            Where-Object { $_.PrincipalSource -eq 'Local' } |
+            Select-Object -ExpandProperty Name
+        $curAdmins | ForEach-Object { "  $($_)" }
+
+        $expected = ($KeepAdmins + 'Administrator') | Sort-Object -Unique
+        $extraAdmins = $curAdmins | Where-Object { $expected -notcontains $_ }
+
+        Write-Host "`n[Admins] Would remove from Administrators:" -ForegroundColor Cyan
+        if ($extraAdmins) { $extraAdmins | ForEach-Object { "  $($_)" } }
+        else { Write-Host "  (none)" }
+
+        # --- USER CHECK ---
+        Write-Host "`n[Users] Current Local Users:" -ForegroundColor Cyan
+        $curUsers = Get-LocalUser
+        $curUsers | ForEach-Object { "  $($_.Name) (Enabled: $($_.Enabled))" }
+
+        $extraUsers = $curUsers.Name | Where-Object { $KeepUsers -notcontains $_ }
+
+        Write-Host "`n[Users] Would disable:" -ForegroundColor Cyan
+        if ($extraUsers) { $extraUsers | ForEach-Object { "  $($_)" } }
+        else { Write-Host "  (none)" }
+
+        Write-Host "`n[Users] Would enable:" -ForegroundColor Cyan
+        foreach ($u in $KeepUsers) {
+            if ($curUsers.Name -contains $u) { "  $u" }
+            else { "  $u (WARNING: does not exist, no creation performed)" }
+        }
+
+        # --- FIREWALL CHECK ---
+        Write-Host "`n[Firewall] Would apply role profile: $Role" -ForegroundColor Cyan
+        switch ($Role) {
+            'IIS'   { Write-Host "  Open ports: 80, 443" }
+            'WINRM' { Write-Host "  Open ports: 5985, 5986" }
+            'ICMP'  { Write-Host "  ICMP only (no ports)" }
+        }
+
+        # --- SERVICES CHECK ---
+        Write-Host "`n[Services] Would stop/disable baseline unsafe services" -ForegroundColor Cyan
+        Write-Host "  RemoteRegistry, DiagTrack, SNMP, Telnet, SSDPSRV, upnphost"
+
+        Write-Host "`n[Services] Would ensure required role services running:" -ForegroundColor Cyan
+        switch ($Role) {
+            'IIS'   { Write-Host "  W3SVC, WAS, HTTP" }
+            'WINRM' { Write-Host "  WinRM" }
+            'ICMP'  { Write-Host "  (none)" }
+        }
+
+        Write-Host "`n===== END DRY RUN (NO CHANGES APPLIED) =====" -ForegroundColor Yellow
+        return
+    }
+
+    # --- LIVE MODE BELOW (unchanged) ---
     $BTDir = 'C:\BlueTeam'
     if (-not (Test-Path $BTDir)) { New-Item -ItemType Directory -Path $BTDir | Out-Null }
     $LogPath = Join-Path $BTDir 'harden.log'
     try { Stop-Transcript | Out-Null } catch {}
     Start-Transcript -Path $LogPath -Append | Out-Null
 
-    Write-Host @"
-==================================
-|  Mini-Comp Win Harden (Safe)   |
-|  Role: $Role                   |
-|  Log:  $LogPath                |
-==================================
-"@ -ForegroundColor Magenta
+    Write-Host "Running harden - Role: $Role"
 
     Invoke-Admins   -KeepAdmins $KeepAdmins
     Invoke-Users    -KeepUsers  $KeepUsers
     Invoke-Firewall -Role $Role
     Invoke-Services -Role $Role
 
-    Write-Host "`nDone." -ForegroundColor Green
+    Write-Host "Harden complete."
     try { Stop-Transcript | Out-Null } catch {}
 }
+
