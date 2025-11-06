@@ -3,6 +3,8 @@ Small hardening script for RIT CCDC mini comp 2025
 
 Remember to run as admin
 
+if want to dryrun add -DryRun between service and Keepadmins
+
 # Moon Landing (IIS)
 ```pwsh
 powershell -ep bypass -c "iex (iwr -UseB 'https://raw.githubusercontent.com/bdawg295/Win-CCDC-MiniComp-2025/main/harden.ps1'); harden -Role IIS -KeepAdmins 'fathertime','chronos','aion','kairos','drwho','martymcfly','arthurdent','sambeckett' -KeepUsers 'merlin','terminator','mrpeabody','jamescole','docbrown','professorparadox','loki','riphunter','theflash','tonystark','drstrange','bartallen'"
