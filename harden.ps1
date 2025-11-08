@@ -18,6 +18,14 @@ function Read-YesNo($Prompt) {
 function Get-LocalNames($members) {
     $members | ForEach-Object { if ($_ -match '\\') { $_.Split('\')[-1] } else { $_ } }
 }
+# Protected/built-in accounts we never touch
+$ProtectedUsers       = @('Administrator','Guest','krbtgt','WDAGUtilityAccount','DefaultAccount')
+# Any account ending with "$" is a computer/machine account; never touch
+$ProtectedUserPattern = '^\w+\$$'
+
+function Test-IsDomainController {
+    return Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
+}
 
 # --- Admins: de-elevate extras only (no additions) ---
 function Invoke-Admins {
@@ -77,12 +85,18 @@ function Invoke-Users {
         }
     }
 
-    foreach ($cu in $current) {
-        if ($Keep -notcontains $cu.Name) {
-            Write-Host "Disabling non-authorized user: $($cu.Name)"
-            Disable-LocalUser -Name $cu.Name -ErrorAction SilentlyContinue
-        }
+    # Build the set we are allowed to disable: not in keep-list, not protected, not machine accounts
+    $toDisable = $current | Where-Object {
+        ($Keep -notcontains $_.Name) -and
+        ($ProtectedUsers -notcontains $_.Name) -and
+        ($_.Name -notmatch $ProtectedUserPattern)
     }
+    
+    foreach ($cu in $toDisable) {
+        Write-Host "Disabling non-authorized user: $($cu.Name)"
+        Disable-LocalUser -Name $cu.Name -ErrorAction SilentlyContinue
+    }
+
 }
 
 # --- Firewall: only open what the role needs ---
@@ -181,11 +195,20 @@ function harden {
         $curUsers = Get-LocalUser
         $curUsers | ForEach-Object { "  $($_.Name) (Enabled: $($_.Enabled))" }
 
-        $extraUsers = $curUsers.Name | Where-Object { $KeepUsers -notcontains $_ }
+        $extraUsers = $curUsers.Name | Where-Object {
+        ($KeepUsers -notcontains $_) -and
+        ($ProtectedUsers -notcontains $_) -and
+        ($_ -notmatch $ProtectedUserPattern)
+        }
 
         Write-Host "`n[Users] Would disable:" -ForegroundColor Cyan
         if ($extraUsers) { $extraUsers | ForEach-Object { "  $($_)" } }
         else { Write-Host "  (none)" }
+        
+        Write-Host "`n[Users] Always protected (skipped):" -ForegroundColor Cyan
+        $ProtectedUsers | ForEach-Object { "  $($_)" }
+        Write-Host "  (machine accounts matching: $ProtectedUserPattern)"
+
 
         Write-Host "`n[Users] Would enable:" -ForegroundColor Cyan
         foreach ($u in $KeepUsers) {
@@ -222,8 +245,17 @@ function harden {
     $LogPath = Join-Path $BTDir 'harden.log'
     try { Stop-Transcript | Out-Null } catch {}
     Start-Transcript -Path $LogPath -Append | Out-Null
-
     Write-Host "Running harden - Role: $Role"
+
+    if (Test-IsDomainController) {
+    Write-Warning "Domain Controller detected. Skipping user/admin changes to avoid disabling DOMAIN accounts."
+    Invoke-Firewall -Role $Role
+    Invoke-Services -Role $Role
+    Write-Host "Harden (DC-safe) complete."
+    try { Stop-Transcript | Out-Null } catch {}
+    return
+    }
+
 
     Invoke-Admins   -KeepAdmins $KeepAdmins
     Invoke-Users    -KeepUsers  $KeepUsers
