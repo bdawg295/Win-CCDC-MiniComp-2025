@@ -1,7 +1,7 @@
 # Win-CCDC-MiniComp-2025
 Small hardening script for RIT CCDC mini comp 2025
 
-Remember to run as admin
+Remember to run as admin, don't run as DC
 
 if want to dryrun add -DryRun between service and Keepadmins
 
