@@ -21,7 +21,7 @@ function Get-LocalNames($members) {
 # Protected/built-in accounts we never touch
 $ProtectedUsers       = @('Administrator','Guest','krbtgt','WDAGUtilityAccount','DefaultAccount')
 # Any account ending with "$" is a computer/machine account; never touch
-$ProtectedUserPattern = '^\w+\$$'
+$ProtectedUserPattern = '.*\$$'
 
 function Test-IsDomainController {
     return Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
@@ -125,6 +125,15 @@ function Invoke-Services {
     param([ValidateSet('IIS','WINRM','ICMP')] [string]$Role)
 
     $baselineDisable = @('RemoteRegistry','DiagTrack','SNMP','Telnet','SSDPSRV','upnphost')
+    
+    $DatadogSvcNames = (Get-Service |
+        Where-Object { $_.Name -match 'datadog' -or $_.DisplayName -match 'Datadog' } |
+        Select-Object -ExpandProperty Name)
+
+    if ($DatadogSvcNames) {
+        $baselineDisable = $baselineDisable | Where-Object { $DatadogSvcNames -notcontains $_ }
+    }
+    
     foreach ($s in $baselineDisable) {
         $svc = Get-Service -Name $s -ErrorAction SilentlyContinue
         if ($svc) {
@@ -168,6 +177,12 @@ function harden {
 
         [switch]$DryRun
     )
+    
+     # Interactive DryRun prompt when no flag was supplied ---
+    if (-not $PSBoundParameters.ContainsKey('DryRun')) {
+        $ans = Read-YesNo "Run in DRY RUN mode (no changes)"
+        if ($ans -eq 'Y') { $DryRun = $true }
+    }
 
     if ($DryRun) {
         Write-Host "===== DRY RUN MODE =====" -ForegroundColor Yellow
@@ -265,4 +280,3 @@ function harden {
     Write-Host "Harden complete."
     try { Stop-Transcript | Out-Null } catch {}
 }
-
